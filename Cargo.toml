@@ -1,0 +1,15 @@
+[package]
+name = "theseus"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "theseus"
+path = "src/lib.rs"
+
+[[bin]]
+name = "theseus"
+path = "src/main.rs"
+
+[dependencies]
+pyo3-ffi = "0.22.4"
