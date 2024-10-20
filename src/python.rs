@@ -11,12 +11,11 @@ use std::{
 
 mod exception;
 mod object;
-mod object_impl;
-mod reference;
+mod types;
 
 pub use exception::*; // TODO
 pub use object::*; // TODO
-pub use reference::*; // TODO
+pub use types::*; // TODO
 
 pub use pyo3_ffi as ffi;
 

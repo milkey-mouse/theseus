@@ -12,14 +12,13 @@ use pyo3_ffi::PyErr_SetObject;
 use crate::send_cell::SendCell;
 
 use super::{
-    ffi, pyvarobject_head_init, BaseException, BorrowedRef, InstanceOf, PyObjectWrapper, StrongRef,
-    Tuple, Type,
+    ffi, pyvarobject_head_init, BaseExceptionObject, PyObjectWrapper, StrongRef, Tuple, Type,
 };
 
 pub trait PyResult: Sized {
     type Output;
 
-    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseException>>;
+    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseExceptionObject>>;
 
     unsafe fn unwrap_or_exception(self) -> Self::Output {
         unsafe {
@@ -32,10 +31,10 @@ pub trait PyResult: Sized {
 impl<T> PyResult for *mut T {
     type Output = NonNull<T>;
 
-    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseException>> {
+    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseExceptionObject>> {
         match NonNull::new(self) {
             Some(ptr) => Ok(ptr),
-            None => Err(BaseException::current().unwrap()),
+            None => Err(BaseExceptionObject::current().unwrap()),
         }
     }
 }
@@ -43,10 +42,10 @@ impl<T> PyResult for *mut T {
 impl PyResult for c_int {
     type Output = ();
 
-    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseException>> {
+    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseExceptionObject>> {
         match self {
             0 => Ok(()),
-            _ => Err(BaseException::current().unwrap()),
+            _ => Err(BaseExceptionObject::current().unwrap()),
         }
     }
 }
@@ -54,10 +53,10 @@ impl PyResult for c_int {
 impl PyResult for c_uint {
     type Output = ();
 
-    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseException>> {
+    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseExceptionObject>> {
         match self {
             0 => Ok(()),
-            _ => Err(BaseException::current().unwrap()),
+            _ => Err(BaseExceptionObject::current().unwrap()),
         }
     }
 }
@@ -65,10 +64,10 @@ impl PyResult for c_uint {
 impl<T> PyResult for Option<T> {
     type Output = T;
 
-    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseException>> {
+    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseExceptionObject>> {
         match self {
             Some(value) => Ok(value),
-            None => Err(BaseException::current().unwrap()),
+            None => Err(BaseExceptionObject::current().unwrap()),
         }
     }
 }
@@ -76,15 +75,15 @@ impl<T> PyResult for Option<T> {
 impl PyResult for () {
     type Output = ();
 
-    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseException>> {
-        match BaseException::current() {
+    unsafe fn ok_or_exception(self) -> Result<Self::Output, BorrowedRef<BaseExceptionObject>> {
+        match BaseExceptionObject::current() {
             Some(exception) => Err(exception),
             None => Ok(()),
         }
     }
 }
 
-pub struct Exception(SendCell<StrongRef<BaseException>>);
+pub struct Exception(SendCell<StrongRef<BaseExceptionObject>>);
 
 impl Exception {
     pub(super) unsafe fn catch_unwind<T, F: FnOnce() -> *mut T + panic::UnwindSafe>(
@@ -103,7 +102,7 @@ impl Exception {
         }
     }
 
-    pub(super) unsafe fn throw(exception: BorrowedRef<BaseException>) -> ! {
+    pub(super) unsafe fn throw(exception: BorrowedRef<BaseExceptionObject>) -> ! {
         unsafe {
             if let Some(mut exception) = exception.cast_dyn::<PanicException>() {
                 let payload = exception.take().unwrap();
@@ -117,7 +116,7 @@ impl Exception {
     }
 
     pub(super) unsafe fn handle_unchecked() -> ! {
-        unsafe { Self::throw(BaseException::current().unwrap()) }
+        unsafe { Self::throw(BaseExceptionObject::current().unwrap()) }
     }
 
     pub(super) unsafe fn handle<T: PyResult>(maybe_exception: T) -> T::Output {
@@ -129,20 +128,20 @@ impl Exception {
     }
 }
 
-fn _pyexc_baseexception() -> *mut ffi::PyTypeObject {
-    unsafe { ffi::PyExc_BaseException as *mut ffi::PyTypeObject }
+fn _pyexc_BaseExceptionObject() -> *mut ffi::PyTypeObject {
+    unsafe { ffi::PyExc_BaseExceptionObject as *mut ffi::PyTypeObject }
 }
 
 static mut PANIC_EXCEPTION_TYPE: MaybeUninit<ffi::PyTypeObject> = MaybeUninit::zeroed();
 
 #[repr(C)]
 struct PanicExceptionObject {
-    base: ffi::PyBaseExceptionObject,
+    base: ffi::PyBaseExceptionObjectObject,
     payload: Option<Box<dyn Any + Send>>,
 }
 
 unsafe impl InstanceOf<ffi::PyObject> for PanicExceptionObject {}
-unsafe impl InstanceOf<ffi::PyBaseExceptionObject> for PanicExceptionObject {}
+unsafe impl InstanceOf<ffi::PyBaseExceptionObjectObject> for PanicExceptionObject {}
 
 #[derive(Clone, Copy)]
 struct PanicException;
@@ -169,16 +168,16 @@ unsafe impl PyObjectWrapper for PanicException {
                 (&raw mut (*ptr).tp_doc).write(c"Rust code panicked".as_ptr());
                 (&raw mut (*ptr).tp_dictoffset)
                     .write(mem::offset_of!(PanicExceptionObject, base.dict) as _);
-                (&raw mut (*ptr).tp_base).write(_pyexc_baseexception());
+                (&raw mut (*ptr).tp_base).write(_pyexc_BaseExceptionObject());
                 (&raw mut (*ptr).tp_dealloc).write(Some(PanicException::dealloc));
 
-                // GC-related things; we can keep BaseException's impl
+                // GC-related things; we can keep BaseExceptionObject's impl
                 // because no fields we add can contain `ffi::PyObject`s
-                (&raw mut (*ptr).tp_traverse).write((*_pyexc_baseexception()).tp_traverse);
-                (&raw mut (*ptr).tp_clear).write((*_pyexc_baseexception()).tp_clear);
+                (&raw mut (*ptr).tp_traverse).write((*_pyexc_BaseExceptionObject()).tp_traverse);
+                (&raw mut (*ptr).tp_clear).write((*_pyexc_BaseExceptionObject()).tp_clear);
 
                 // unneeded when ffi::Py_TPFLAGS_DISALLOW_INSTANTIATION is set
-                //(&raw mut (*ptr).tp_init).write(_pyexc_baseexception().tp_init);
+                //(&raw mut (*ptr).tp_init).write(_pyexc_BaseExceptionObject().tp_init);
                 //(&raw mut (*ptr).tp_new).write(PanicException::new);
 
                 Exception::handle(ffi::PyType_Ready(ptr));
@@ -192,12 +191,12 @@ unsafe impl PyObjectWrapper for PanicException {
 impl PanicException {
     fn new(payload: Option<Box<dyn Any + Send>>) -> StrongRef<PanicException> {
         unsafe {
-            let baseexception_new = (*_pyexc_baseexception()).tp_new.unwrap_unchecked();
+            let BaseExceptionObject_new = (*_pyexc_BaseExceptionObject()).tp_new.unwrap_unchecked();
             let subtype = Self::py_type().as_ptr();
             let args = Tuple::new(0);
             let kwargs = ptr::null_mut();
             let exception: NonNull<PanicExceptionObject> =
-                Exception::handle(baseexception_new(subtype, args.as_ptr(), kwargs)).cast();
+                Exception::handle(BaseExceptionObject_new(subtype, args.as_ptr(), kwargs)).cast();
             (&raw mut (*exception.as_ptr()).payload).write(payload);
             StrongRef::from(exception)
         }
@@ -205,8 +204,10 @@ impl PanicException {
 
     extern "C" fn dealloc(ptr: *mut ffi::PyObject) {
         unsafe {
-            let baseexception_dealloc = (*_pyexc_baseexception()).tp_dealloc.unwrap_unchecked();
-            baseexception_dealloc(ptr);
+            let BaseExceptionObject_dealloc = (*_pyexc_BaseExceptionObject())
+                .tp_dealloc
+                .unwrap_unchecked();
+            BaseExceptionObject_dealloc(ptr);
             ptr::drop_in_place(&raw mut (*(ptr as *mut PanicExceptionObject)).payload);
         }
     }
